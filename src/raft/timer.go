@@ -35,7 +35,7 @@ func (t *Timer) Start() {
 					panic("Unknown command")
 				}
 			case <-time.After(t.timeout):
-				t.handler()
+				go t.handler()
 			}
 		}
 	}()

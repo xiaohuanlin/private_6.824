@@ -162,16 +162,19 @@ type RequestVoteReply struct {
 // example RequestVote RPC handler.
 //
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
-	log.Printf("Raft %v receive RequestVote", rf.me)
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	log.Printf("Raft %v(term:%v) receive RequestVote from %v(term:%v)", rf.me, rf.currentTerm, args.CandidateId, args.Term)
 	// If RPC request or response contains term T > currentTerm: set currentTerm = T, convert to follower
 	if args.Term > rf.currentTerm {
 		rf.currentTerm = args.Term
+		rf.TurnToFollower()
 	}
 
 	// Reply false if term < currentTerm
 	if args.Term < rf.currentTerm {
 		reply.VoteGranted = false
-		log.Printf("Raft %v reject RequestVote", rf.me)
+		log.Printf("Raft %v(term:%v) reject RequestVote from %v(term:%v)", rf.me, rf.currentTerm, args.CandidateId, args.Term)
 		return
 	}
 
@@ -181,11 +184,11 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		rf.voteFor = args.CandidateId
 		reply.Term = args.Term
 		reply.VoteGranted = true
-		log.Printf("Raft %v accept RequestVote", rf.me)
+		log.Printf("Raft %v(term:%v) accept RequestVote from %v(term:%v)", rf.me, rf.currentTerm, args.CandidateId, args.Term)
 		return
 	}
 	reply.VoteGranted = false
-	log.Printf("Raft %v reject RequestVote", rf.me)
+	log.Printf("Raft %v(term:%v) reject RequestVote from %v(term:%v)", rf.me, rf.currentTerm, args.CandidateId, args.Term)
 }
 
 //
@@ -240,10 +243,18 @@ type AppendEntriesReply struct {
 
 // AppendEntries handler
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
 	log.Printf("Raft %v receive AppendEntries", rf.me)
 	// If RPC request or response contains term T > currentTerm: set currentTerm = T, convert to follower 
 	if args.Term > rf.currentTerm {
 		rf.currentTerm = args.Term
+		rf.TurnToFollower()
+	}
+
+	if atomic.LoadInt32(&rf.state) == Candidate {
+		// If AppendEntries RPC received from new leader: convert to follower
+		rf.TurnToFollower()
 	}
 
 	// Reply false if term < currentTerm
@@ -296,10 +307,6 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		// todo: apply it to state machine
 	}
 
-	if atomic.LoadInt32(&rf.state) == Candidate {
-		// If AppendEntries RPC received from new leader: convert to follower
-		rf.TurnToFollower()
-	}
 	log.Printf("Raft %v accept AppendEntries", rf.me)
 }
 
@@ -314,7 +321,7 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 // (heartbeat) to each server; repeat during idle periods to
 // prevent election timeouts
 func (rf *Raft) heartBeat() {
-	log.Printf("Raft %v send heartBeat", rf.me)
+	// log.Printf("Raft %v send heartBeat", rf.me)
 	for i := 0; i < len(rf.peers); i++ {
 		args := AppendEntriesArgs {rf.currentTerm, rf.me, 0, 0, make([]Log, 0), rf.commitIndex}
 		reply := AppendEntriesReply {}
@@ -380,12 +387,13 @@ func (rf *Raft) startElection() {
 	rf.voteFor = rf.me
 	// Reset election timer
 	rf.voteTimer.Reset()
+	rf.voteTimer.timeout = time.Duration((rand.Intn(400) + 400)) * time.Microsecond;
 
-	lastLog := Log {}
-	if len(rf.log) > 0 {
-		lastLog = rf.log[len(rf.log) - 1]
-	}
+	// change dummy log term
+	rf.log[0].Term = rf.currentTerm
+
 	log.Printf("Raft %v enter loop", rf.me)
+	lastLog := rf.log[len(rf.log) - 1]
 	args := RequestVoteArgs {rf.currentTerm, rf.me, lastLog.Index, lastLog.Term}
 
 	// Send RequestVote RPCs to all other servers
@@ -407,6 +415,7 @@ func (rf *Raft) startElection() {
 			}
 		}(i, rf.currentTerm)
 	}
+	log.Printf("Raft %v send vote done", rf.me)
 }
 
 func (rf *Raft) TurnToCandidate() {
@@ -436,6 +445,8 @@ func (rf *Raft) TurnToFollower() {
 		return
 	}
 	log.Printf("Raft %v turn to follower", rf.me)
+	rf.voteFor = InvalidVote
+	rf.voteCount = 0
 
 	atomic.StoreInt32(&rf.state, Follower)
 }
@@ -464,13 +475,13 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.state = Follower
 
 	rf.voteFor = InvalidVote
-	rf.voteTimer = Timer {sync.Mutex{}, make(chan int, 1), time.Duration((rand.Intn(200) + 400)) * time.Microsecond, rf.TurnToCandidate}
+	rf.voteTimer = Timer {sync.Mutex{}, make(chan int), time.Duration((rand.Intn(400) + 400)) * time.Microsecond, rf.TurnToCandidate}
 	rf.voteTimer.Start()
 	rf.voteCount = 0
 
-	rf.appendTimer = Timer {sync.Mutex{}, make(chan int, 1), time.Duration(100 * time.Microsecond), rf.heartBeat}
+	rf.appendTimer = Timer {sync.Mutex{}, make(chan int), time.Duration(100 * time.Microsecond), rf.heartBeat}
 
-	rf.log = make([]Log, 0)
+	rf.log = make([]Log, 1)
 
 	rf.commitIndex = 0
 	rf.lastApplied = 0
