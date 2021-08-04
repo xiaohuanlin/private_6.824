@@ -1,7 +1,6 @@
 package raft
 
 import (
-	"log"
 	"sync"
 	"time"
 )
@@ -20,12 +19,12 @@ type Timer struct {
 }
 
 func (t *Timer) Start(now bool) {
-	log.Println("Start timer")
+	DPrintf("Start timer")
 	go func ()  {
 		t.mtx.Lock()
 		defer t.mtx.Unlock()
 		t.active = true
-		if now && t.active {
+		if now {
 			go t.handler()
 		}
 
@@ -33,11 +32,12 @@ func (t *Timer) Start(now bool) {
 			select {
 			case v := <- t.channel:
 				if v == Reset {
-					log.Println("Reset timer")
+					t.active = true
+					DPrintf("Reset timer")
 				} else if v == Cancel {
 					t.active = false
-					log.Println("Cancel timer")
-					break
+					DPrintf("Cancel timer")
+					return
 				} else {
 					panic("Unknown command")
 				}
@@ -51,11 +51,11 @@ func (t *Timer) Start(now bool) {
 }
 
 func (t *Timer) Cancel() {
-	log.Println("Send cancel signal")
+	DPrintf("Send cancel signal")
 	t.channel <- Cancel
 }
 
 func (t *Timer) Reset()  {
-	log.Println("Send reset signal")
+	DPrintf("Send reset signal")
 	t.channel <- Reset
 }

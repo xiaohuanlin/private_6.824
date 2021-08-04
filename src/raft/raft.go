@@ -19,7 +19,6 @@ package raft
 
 import (
 	"fmt"
-	"log"
 	"math/rand"
 	"sync"
 	"sync/atomic"
@@ -174,7 +173,7 @@ type RequestVoteReply struct {
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	log.Printf("Raft %v(term:%v) receive RequestVote %v", rf.me, rf.currentTerm, args)
+	DPrintf("Raft %v(term:%v) receive RequestVote %v", rf.me, rf.currentTerm, args)
 	// If RPC request or response contains term T > currentTerm: set currentTerm = T, convert to follower
 	if args.Term > rf.currentTerm {
 		rf.currentTerm = args.Term
@@ -184,7 +183,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Reply false if term < currentTerm
 	if args.Term < rf.currentTerm {
 		reply.VoteGranted = false
-		log.Printf("Raft %v(term:%v) receive RequestVote %v", rf.me, rf.currentTerm, args)
+		DPrintf("Raft %v(term:%v) receive RequestVote %v", rf.me, rf.currentTerm, args)
 		return
 	}
 
@@ -194,11 +193,11 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		rf.voteFor = args.CandidateId
 		reply.Term = args.Term
 		reply.VoteGranted = true
-		log.Printf("Raft %v(term:%v) accept RequestVote %v", rf.me, rf.currentTerm, args)
+		DPrintf("Raft %v(term:%v) accept RequestVote %v", rf.me, rf.currentTerm, args)
 		return
 	}
 	reply.VoteGranted = false
-	log.Printf("Raft %v(term:%v) reject RequestVote %v", rf.me, rf.currentTerm, args)
+	DPrintf("Raft %v(term:%v) reject RequestVote %v", rf.me, rf.currentTerm, args)
 }
 
 //
@@ -231,7 +230,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 // the struct itself.
 //
 func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
-	log.Printf("Raft %v send RequestVote to %v", rf.me, server)
+	DPrintf("Raft %v send RequestVote to %v", rf.me, server)
 	ok := rf.peers[server].Call("Raft.RequestVote", args, reply)
 	return ok
 }
@@ -265,17 +264,11 @@ type AppendEntriesReply struct {
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	log.Printf("Raft %v(term:%v) receive AppendEntries from %v", rf.me, rf.currentTerm, args)
-	rf.voteTimer.Reset()
+	DPrintf("Raft %v(term:%v) receive AppendEntries from %v", rf.me, rf.currentTerm, args)
 
 	// If RPC request or response contains term T > currentTerm: set currentTerm = T, convert to follower 
 	// If AppendEntries RPC received from new leader: convert to follower
-	if args.Term > rf.currentTerm {
-		rf.currentTerm = args.Term
-		rf.TurnToFollower()
-	}
-
-	if atomic.LoadInt32(&rf.state) == Candidate {
+	if args.Term > rf.currentTerm || atomic.LoadInt32(&rf.state) == Candidate {
 		rf.currentTerm = args.Term
 		rf.TurnToFollower()
 	}
@@ -283,7 +276,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	// Reply false if term < currentTerm
 	if args.Term < rf.currentTerm {
 		reply.Success = false
-		log.Printf("Raft %v(term:%v) refuse AppendEntries from %v", rf.me, rf.currentTerm, args)
+		DPrintf("Raft %v(term:%v) refuse AppendEntries from %v", rf.me, rf.currentTerm, args)
 		return
 	}
 
@@ -291,10 +284,12 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	if rf.log[len(rf.log) - 1].Index < args.PrevLogIndex ||
 		rf.log[args.PrevLogIndex].Term != args.PrevLogTerm {
 		reply.Success = false
-		log.Printf("Raft %v(term:%v, log_term:%v log_index:%v) refuse AppendEntries from %v",
+		DPrintf("Raft %v(term:%v, log_term:%v log_index:%v) refuse AppendEntries from %v",
 			rf.me, rf.currentTerm, rf.log[args.PrevLogIndex].Term, rf.log[len(rf.log) - 1].Index, args)
 		return
 	}
+	// Reset vote timer
+	rf.voteTimer.Reset()
 
 	// If an existing entry conflicts with a new one (same index but different terms), delete the existing entry and all that follow it
 	remainEntries := args.Entries
@@ -312,8 +307,6 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	// Append any new entries not already in the log
 	rf.log = append(rf.log, remainEntries...)
 	reply.Success = true
-	// Reset vote timer
-	rf.voteTimer.Reset()
 
 	// If leaderCommit > commitIndex, set commitIndex = min(leaderCommit, index of last new entry)
 	if args.LeaderCommit > rf.commitIndex {
@@ -331,7 +324,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		// todo: apply it to state machine
 	}
 
-	log.Printf("Raft %v(term:%v) accept AppendEntries from %v", rf.me, rf.currentTerm, args)
+	DPrintf("Raft %v(term:%v) accept AppendEntries from %v", rf.me, rf.currentTerm, args)
 }
 
 
@@ -395,6 +388,8 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 func (rf *Raft) Kill() {
 	atomic.StoreInt32(&rf.dead, 1)
 	// Your code here, if desired.
+
+	DPrintf("Raft %v has been killed", rf.me)
 }
 
 func (rf *Raft) killed() bool {
@@ -403,7 +398,7 @@ func (rf *Raft) killed() bool {
 }
 
 func (rf *Raft) startElection() {
-	log.Printf("Raft %v start election", rf.me)
+	DPrintf("Raft %v start election", rf.me)
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
@@ -415,7 +410,7 @@ func (rf *Raft) startElection() {
 	// Reset election timer
 	rf.voteTimer.Reset()
 
-	log.Printf("Raft %v enter loop", rf.me)
+	DPrintf("Raft %v enter loop", rf.me)
 	lastLog := rf.log[len(rf.log) - 1]
 	args := RequestVoteArgs {rf.currentTerm, rf.me, lastLog.Index, lastLog.Term}
 
@@ -427,10 +422,10 @@ func (rf *Raft) startElection() {
 
 		go func (iter int, term int) {
 			reply := RequestVoteReply {}
-			rf.sendRequestVote(iter, &args, &reply)
+			ok := rf.sendRequestVote(iter, &args, &reply)
 
 			// If votes received from majority of servers: become leader
-			if reply.VoteGranted && reply.Term == term && term == rf.currentTerm {
+			if ok && reply.VoteGranted && reply.Term == term && term == rf.currentTerm {
 				// majority peers agree it become a leader
 				if atomic.AddInt32(&rf.voteCount, 1)  > int32(len(rf.peers) / 2) {
 					rf.TurnToLeader()
@@ -438,16 +433,11 @@ func (rf *Raft) startElection() {
 			}
 		}(i, rf.currentTerm)
 	}
-	log.Printf("Raft %v send vote done", rf.me)
+	DPrintf("Raft %v send vote done", rf.me)
 }
 
 func (rf *Raft) TurnToCandidate() {
-	if atomic.LoadInt32(&rf.state) == Candidate {
-		return
-	}
-	atomic.StoreInt32(&rf.state, Candidate)
-
-	log.Printf("Raft %v(term:%v) turn to candidate", rf.me, rf.currentTerm)
+	DPrintf("Raft %v(term:%v) turn to candidate", rf.me, rf.currentTerm)
 
 	if rf.appendTimer.active {
 		rf.appendTimer.Cancel()
@@ -462,14 +452,14 @@ func (rf *Raft) TurnToLeader() {
 	}
 	atomic.StoreInt32(&rf.state, Leader)
 
-	log.Printf("Raft %v(term:%v) turn to leader", rf.me, rf.currentTerm)
+	DPrintf("Raft %v(term:%v) turn to leader", rf.me, rf.currentTerm)
 
 	rf.voteTimer.Cancel()
 	rf.appendTimer.Start(true)
 }
 
 func (rf *Raft) TurnToFollower() {
-	log.Printf("Raft %v(term:%v) turn to follower", rf.me, rf.currentTerm)
+	DPrintf("Raft %v(term:%v) turn to follower", rf.me, rf.currentTerm)
 	atomic.StoreInt32(&rf.state, Follower)
 
 	rf.InitVoter()
@@ -481,7 +471,7 @@ func (rf *Raft) TurnToFollower() {
 
 /*
 it is a helper function to init voter timer
- */
+*/
 func (rf *Raft) InitVoter() {
 	rf.voteFor = InvalidVote
 	rf.voteCount = 0
@@ -507,7 +497,7 @@ func (rf *Raft) InitVoter() {
 func Make(peers []*labrpc.ClientEnd, me int,
 	persister *Persister, applyCh chan ApplyMsg) *Raft {
 
-	log.Printf("Raft %v start election", me)
+	DPrintf("Raft %v start election", me)
 	rf := &Raft{}
 	rf.peers = peers
 	rf.persister = persister
