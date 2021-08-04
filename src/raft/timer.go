@@ -16,12 +16,18 @@ type Timer struct {
 	channel chan int
 	timeout time.Duration
 	handler func()
+	active bool
 }
 
-func (t *Timer) Start() {
+func (t *Timer) Start(now bool) {
+	log.Println("Start timer")
 	go func ()  {
 		t.mtx.Lock()
 		defer t.mtx.Unlock()
+		t.active = true
+		if now && t.active {
+			go t.handler()
+		}
 
 		for ;; {
 			select {
@@ -29,13 +35,16 @@ func (t *Timer) Start() {
 				if v == Reset {
 					log.Println("Reset timer")
 				} else if v == Cancel {
+					t.active = false
 					log.Println("Cancel timer")
 					break
 				} else {
 					panic("Unknown command")
 				}
 			case <-time.After(t.timeout):
-				go t.handler()
+				if t.active {
+					go t.handler()
+				}
 			}
 		}
 	}()
