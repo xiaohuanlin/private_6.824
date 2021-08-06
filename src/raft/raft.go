@@ -364,14 +364,27 @@ func (rf *Raft) heartBeat() {
 // the leader.
 //
 func (rf *Raft) Start(command interface{}) (int, int, bool) {
-	index := -1
-	term := -1
-	isLeader := true
+	isLeader := atomic.LoadInt32(&rf.state) == Leader
+	if !isLeader {
+		return rf.commitIndex, rf.currentTerm, false
+	}
 
-	// Your code here (2B).
-
-
-	return index, term, isLeader
+	// send append entries
+	for i := 0; i < len(rf.peers); i++ {
+		if i == rf.me {
+			continue
+		}
+		args := AppendEntriesArgs {
+			rf.currentTerm,
+			rf.me,
+			0,
+			0,
+			make([]Log, 0),
+			rf.commitIndex,
+		}
+		reply := AppendEntriesReply {}
+		rf.sendAppendEntries(i, &args, &reply)
+	}
 }
 
 //
@@ -456,6 +469,12 @@ func (rf *Raft) TurnToLeader() {
 
 	rf.voteTimer.Cancel()
 	rf.appendTimer.Start(true)
+
+	// initial nextIndex and matchIndex
+	for i := 0; i < len(rf.nextIndex); i++ {
+		rf.nextIndex[i] = rf.log[len(rf.log) - 1].Index + 1
+		rf.matchIndex[i] = 0
+	}
 }
 
 func (rf *Raft) TurnToFollower() {
@@ -514,6 +533,9 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	rf.commitIndex = 0
 	rf.lastApplied = 0
+
+	rf.nextIndex = make([]int, len(peers))
+	rf.matchIndex = make([]int, len(peers))
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
