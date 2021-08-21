@@ -55,7 +55,8 @@ func (t *Timer) Cancel() {
 	t.channel <- Cancel
 }
 
-func (t *Timer) Reset()  {
+func (t *Timer) Reset(timeout time.Duration)  {
 	DPrintf("Send reset signal")
+	t.timeout = timeout
 	t.channel <- Reset
 }
