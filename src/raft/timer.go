@@ -1,27 +1,62 @@
 package raft
 
-type Timer interface {
-	Make()
-	Handle()
-	Reset()
-	Clear()
+import (
+	"sync"
+	"time"
+)
+
+const (
+	Reset = iota + 1
+	Cancel
+)
+
+type Timer struct {
+	mtx sync.Mutex
+	channel chan int
+	timeout time.Duration
+	handler func()
+	active bool
 }
 
-type VoteTimer struct {
+func (t *Timer) Start(now bool) {
+	DPrintf("Start timer")
+	go func ()  {
+		t.mtx.Lock()
+		defer t.mtx.Unlock()
+		t.active = true
+		if now {
+			go t.handler()
+		}
+
+		for ;; {
+			select {
+			case v := <- t.channel:
+				if v == Reset {
+					t.active = true
+					DPrintf("Reset timer")
+				} else if v == Cancel {
+					t.active = false
+					DPrintf("Cancel timer")
+					return
+				} else {
+					panic("Unknown command")
+				}
+			case <-time.After(t.timeout):
+				if t.active {
+					go t.handler()
+				}
+			}
+		}
+	}()
 }
 
-func (vt *VoteTimer) Make() {
-
+func (t *Timer) Cancel() {
+	DPrintf("Send cancel signal")
+	t.channel <- Cancel
 }
 
-func (vt *VoteTimer) Handle() {
-
-}
-
-func (vt *VoteTimer) Reset() {
-
-}
-
-func (vt *VoteTimer) Clear() {
-
+func (t *Timer) Reset(timeout time.Duration)  {
+	DPrintf("Send reset signal")
+	t.timeout = timeout
+	t.channel <- Reset
 }
