@@ -332,6 +332,14 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		return
 	}
 
+	// Cancel the extra log entries
+	if len(rf.log) > 0 && rf.log[len(rf.log) - 1].Index > args.PrevLogIndex {
+		for _, m := range rf.log[args.PrevLogIndex + 1:] {
+			DPrintf("Raft %v(term:%v) cancel uncommitted log %v", rf.me, rf.currentTerm, m.Index)
+			rf.applyCh <- ApplyMsg{false, m.Message, m.Index}
+		}
+	}
+
 	// If an existing entry conflicts with a new one (same index but different terms), delete the existing entry and all that follow it
 	var remainEntries []Log
 	for i := 0; i < len(args.Entries); i++ {
@@ -344,6 +352,10 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		if rf.log[index].Term != args.Entries[i].Term {
 			// Remove the wrong log
 			DPrintf("Raft %v(term:%v) remove log from %v", rf.me, rf.currentTerm, index)
+			for _, m := range rf.log[index:] {
+				DPrintf("Raft %v(term:%v) cancel uncommitted log %v", rf.me, rf.currentTerm, m.Index)
+				rf.applyCh <- ApplyMsg {false, m.Message, m.Index}
+			}
 			rf.log = rf.log[:index]
 			// Update remaining entries
 			remainEntries = args.Entries[i:]
@@ -422,9 +434,13 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	// If command received from client: append entry to local log
 	var commandLog Log
 	if command == nil {
-		// empty log
-		DPrintf("Raft %v(term:%v) send empty log", rf.me, rf.currentTerm)
-		commandLog = rf.log[0]
+		DPrintf("Raft %v(term:%v) send last log", rf.me, rf.currentTerm)
+		// send last log for updating peer's commit log index
+		index := len(rf.log) - 1
+		if rf.commitIndex + 1 < index {
+			index = rf.commitIndex + 1
+		}
+		commandLog = rf.log[index]
 	} else {
 		DPrintf("Raft %v(term:%v) append local log: index %v", rf.me, rf.currentTerm, len(rf.log))
 		commandLog = Log {rf.currentTerm, len(rf.log), command}
@@ -470,8 +486,13 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 
 					// A log entry is committed once the leader that created the entry
 					// has replicated it on a majority of the server
-					if atomic.AddInt32(&commitCount, 1)  > int32(len(rf.peers) / 2) && !executed {
+					if atomic.AddInt32(&commitCount, 1)  > int32(len(rf.peers) / 2) {
 						rf.mu.Lock()
+						if executed {
+							rf.mu.Unlock()
+							return
+						}
+
 						// Raft never commits log entries from previous terms by counting replicas
 						if len(entries) > 0 && entries[len(entries) - 1].Term < rf.currentTerm && atomic.LoadInt32(&commitCount) != int32(len(rf.peers)) {
 							rf.mu.Unlock()
@@ -607,6 +628,11 @@ func (rf *Raft) TurnToLeader() {
 	rf.voteTimer.Cancel()
 	rf.appendTimer.Start(true)
 
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
+	// update the commit index
+	rf.commitIndex = rf.log[len(rf.log) - 1].Index
 	// initial nextIndex and matchIndex
 	for i := 0; i < len(rf.nextIndex); i++ {
 		rf.nextIndex[i] = rf.log[len(rf.log) - 1].Index + 1
