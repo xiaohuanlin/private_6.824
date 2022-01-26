@@ -4,13 +4,12 @@ const (
 	OK             = "OK"
 	ErrNoKey       = "ErrNoKey"
 	ErrWrongLeader = "ErrWrongLeader"
-	ErrDuplicate   = "ErrDuplicate"
 )
 
 const (
-	GetOp 			= "Get"
-	PutOp 			= "Put"
-	AppendOp 		= "Append"
+	GetOp    = "Get"
+	PutOp    = "Put"
+	AppendOp = "Append"
 )
 
 type Err string
@@ -23,6 +22,7 @@ type PutAppendArgs struct {
 	// You'll have to add definitions here.
 	// Field names must start with capital letters,
 	// otherwise RPC will break.
+	Identity     int64
 	SerialNumber int64
 }
 
@@ -33,6 +33,7 @@ type PutAppendReply struct {
 type GetArgs struct {
 	Key string
 	// You'll have to add definitions here.
+	Identity     int64
 	SerialNumber int64
 }
 
@@ -42,6 +43,7 @@ type GetReply struct {
 }
 
 type GeneralReply struct {
-	Err Err
-	Value string
+	Err          Err
+	Value        string
+	SerialNumber int64
 }
