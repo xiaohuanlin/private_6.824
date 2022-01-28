@@ -763,10 +763,12 @@ func (rf *Raft) Kill() {
 	atomic.StoreInt32(&rf.dead, 1)
 	// Your code here, if desired.
 
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
 	rf.voteTimer.Cancel()
 	rf.appendTimer.Cancel()
 
-	rf.applyCh <- ApplyMsg{false, Dead, nil, 0}
+	close(rf.applyCh)
 	DPrintf("Raft %v has been killed", rf.me)
 }
 
@@ -933,9 +935,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.matchIndex = make([]int, len(peers))
 
 	// kvserver read snapshot
-	if len(persister.ReadSnapshot()) > 0 {
-		applyCh <- ApplyMsg{false, Snapshot, persister.ReadSnapshot(), 0}
-	}
+	applyCh <- ApplyMsg{false, Snapshot, persister.ReadSnapshot(), 0}
 
 	rf.appendTimer = MakeTimer(AppendTimeoutBase*time.Millisecond, rf.heartBeat)
 	if atomic.LoadInt32(&rf.state) == Leader {
